@@ -1,0 +1,133 @@
+---
+title: "B074030023"
+author: "Leia"
+date: "2022/1/4"
+output: html_document
+---
+
+```{r}
+rm(list=ls())#清變數 ls變數
+gc()#清記憶體
+setwd("D:/Course/金融投資與程式交易/Final Project")
+# 讀檔案
+load("SPDATA.Rdata")
+```
+```{r}
+library(data.table)
+library(dplyr)
+library(lubridate)
+library(tidyverse) # 整理資料用
+library(dplyr)
+library(quantmod)
+```
+
+參數設定
+```{r}
+target_year=2021
+Buy_TC=0.001425        #買進交易成本    
+Sell_TC=0.001425+0.003 #賣出交易成本
+```
+
+所需資料整理(併入調整後收盤價 計算績效用)
+```{r}
+sp_d=sp_d %>% 
+  mutate(year=floor(as.numeric(date)/10000)) %>% 
+  left_join(ad_sp_d %>% select(code,date_d,ad_close_d),by=c('code'='code','date'='date_d')) %>% 
+  group_by(code) %>% 
+  filter(n()>=240) %>% 
+  mutate(
+    SMA5=SMA(close,5),
+    SMA10=SMA(close,10),
+    SMA20=SMA(close,20),
+    SMA60=SMA(close,60),
+    SMA120=SMA(close,120),
+    SMA240=SMA(close,240),
+    SMA_Vol=SMA(volume,5)
+    ) %>% 
+  filter(year==target_year) %>%
+  na.omit()
+
+#所需資料整理(併入周線資料)
+sp=sp_d %>% 
+  left_join(sp_w %>% select(code,date_w,close_w,SMA5_w),by=c('code'='code','date'='date_w')) %>% 
+  group_by(code) %>% 
+  filter(year==target_year)%>%
+  na.omit()
+
+
+```
+
+進場條件
+1.價漲：五日均線正斜率
+2.量增：當日成交量>前五天平均成交量*1.5
+3.長紅站上所有均線：開盤價>=最低價、收盤價>=最高價、收盤價>=五日均線
+4.均線多頭排列：五日>十日>二十日>六十日>一百二日>兩百四日
+5.周K收盤>周線五均
+
+出場條件
+成交量小於昨天的七成 全賣
+```{r}
+sp1=sp %>% 
+  group_by(code) %>%
+  mutate(
+    #1
+    buy_condi_1=ifelse(((SMA5-lag(SMA5))>0),1,0),
+    #2
+    buy_condi_2=ifelse(((SMA_Vol-lag(SMA_Vol)*1.5)>0),1,0),
+    #3
+    buy_condi_3=ifelse((open>=low & (close>=high) & close>=SMA5),1,0),
+    #4
+    buy_condi_4=ifelse(( SMA5>SMA10 & SMA10>SMA20 & SMA20>SMA60 & SMA60>SMA120 & SMA120>SMA240),1,0),
+    #5
+    buy_condi_5=ifelse(close_w>SMA5_w,1,0),
+    #buy_signal
+    buy_signal=ifelse((buy_condi_1==1 & buy_condi_2==1 & buy_condi_3==1 & buy_condi_4==1 & buy_condi_5  ),1,0),
+    
+    #sell_signal
+    sell_signal=ifelse(as.numeric(volume)-lag(as.numeric(volume))*0.7<0,1,0)
+    
+    
+    # sell_signal=ifelse(close<SMA5,1,0)
+    # sell_signal=ifelse(lag(close_w)<SMA5_w,1,0)
+    # sell_signal=lag(buy_signal,14)
+    # sell_signal=ifelse(SMA5-lag(SMA5)<0,1,0)
+    
+  ) %>% 
+  na.omit()
+```
+
+
+```{r}
+#濾掉沒有交易的日子
+target=sp1 %>% 
+  filter(
+    !((sell_signal==0)&(buy_signal==0))
+    ) %>%
+  mutate(
+    buy_price=lag(as.numeric(ad_close_d)) ,
+    sell_price=as.numeric(ad_close_d) ) %>% 
+  mutate(
+    Ret=ifelse((lag(buy_signal)==1),(((sell_price*(1-Sell_TC))/(buy_price)*(1-Buy_TC))-1),NA ) ,
+    buy_Date=lag(as.numeric(date)) ,
+    sell_Date=as.numeric(date)) %>% 
+  na.omit() %>%
+  mutate(
+    hold_day=as.numeric(as.Date(as.character(sell_Date),format="%Y%m%d")-as.Date(as.character(buy_Date),format="%Y%m%d") )
+  )
+```
+
+
+```{r}
+#最後績效
+finalresult=target %>% 
+  group_by() %>% 
+  summarise(
+    Count=n(),
+    AvgRet=mean(Ret),
+    Avg_Prob_win=mean(Ret>=0),
+    Avg_hold_day=mean(hold_day),
+    Annual_Ret=AvgRet*365/Avg_hold_day
+  )
+```
+
+
