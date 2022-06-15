@@ -1,5 +1,5 @@
 # five_condi_tradingstrategy
-five buy condition tradingstrategy with ten years stock price\n
+five buy condition tradingstrategies with ten years stock price\n
 
 策略內容為：
 進場條件
